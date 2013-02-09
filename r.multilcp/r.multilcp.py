@@ -140,7 +140,6 @@ def main():
             grass.run_command('r.drain', overwrite=True, input=costmap, output=lcpmap, start_points=cl_points)
             lcpproc2.wait()
             grass.run_command('r.drain', overwrite=True, input=costmap+"2", output=lcpmap+"2", start_points=cl_points+"2")            
-
         else:
             # Create cost surface for with 1 point input
             lcpproc1 = grass.start_command('r.cost', flags="k", overwrite=True, input=friction, output=costmap, start_points=one_point)
