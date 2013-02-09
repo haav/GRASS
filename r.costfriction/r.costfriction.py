@@ -19,23 +19,20 @@
 #% keywords: cost surface
 #% keywords: raster
 #%end
-#%option
+#%option G_OPT_R_INPUT
 #% key: input
-#% type: name
 #% gisprompt: old,raster
 #% description: Name of input elevation map 
 #% required: yes
 #%end
-#%option
+#%option G_OPT_R_OUTPUT
 #% key: friction
-#% type: name
 #% gisprompt: new,raster
 #% description: Name of output friction raster
 #% required: yes
 #%end
-#%option
+#%option G_OPT_R_OUTPUT
 #% key: slope
-#% type: name
 #% gisprompt: new,raster
 #% description: Optional output slope raster
 #% required: no
@@ -64,7 +61,7 @@ def main():
 
     # Check if slope output name is specified
     if not slope:
-        slope = "tmp_slope" + str(os.getpid())
+        slope = "_tmp_slope_%d_" %os.getpid()
 
     # Generate slope (in percent)
     grass.run_command('r.slope.aspect', elevation=dem, slope=slope, format='percent')
@@ -82,7 +79,12 @@ def main():
         grass.fatal("No valid formula chosen")
 
     # Create friction surface
-    grass.mapcalc(expression, outmap = out, slope = slope)
+    try:
+        grass.mapcalc(expression, outmap = out, slope = slope)
+        grass.message("Friction raster <" + out + "> complete")
+    except:
+        grass.run_command('g.remove', rast = slope)
+        grass.fatal("Unable to finish operation. Temporary slope raster deleted.")
 
     # Delete temporary slope map if necessary
     if not delete_slope:
