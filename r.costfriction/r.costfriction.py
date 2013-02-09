@@ -76,7 +76,7 @@ def main():
         expression = "$outmap = 1.0 / (( 6.0 * exp(-3.5 * abs(( $slope / 100) + 0.05 ))) * 1000)"
     elif formula == 'Minetti':
         # Minetti 2002 / Herzog 2010
-        # KONTROLLI SEE VALEM ÜLE NING PANE KA TÄPSEMAD VIITED!
+        # KONTROLLI SEE VALEM YLE NING PANE KA TAPSEMAD VIITED!
         expression = "$outmap = 1337.8 * ($slope / 100)^6 + 278.19 * ($slope / 100)^5 - 517.39 * ($slope / 100)^4 - 78.199 * ($slope / 100)^3 + 93.419 * ($slope / 100)^2 + 19.825 * ($slope / 100) + 1.64"
     else:
         grass.fatal("No valid formula chosen")
