@@ -1,6 +1,24 @@
+#!/usr/bin/env python
+############################################################################
+#
+# MODULE:       r.multilcp
+# AUTHOR(S):    Allar Haav
+#
+# PURPOSE:      A module for creating multiple least cost paths between points
+# COPYRIGHT:    (C) 2013 Allar Haav
+#
+#       This program is free software under the GNU General Public
+#       License (>=v2). Read the file COPYING that comes with GRASS
+#       for details.
+#
+#############################################################################
+
+# KONTROLLI YLE RAADIUS JA CLOSEST PUNKTID. ERITI VIIMANE TEKITAB KAHTLUSI. KOOS NEED KAH HASTI TOOTADA EI TAHA.
+
 #%module
 #% description: Multiple Least-cost path creation
 #% keywords: lcp
+#% keywords: cost
 #% keywords: raster
 #%end
 #%option
@@ -52,125 +70,159 @@
 #% required: no
 #%end
 
+#KONTROLLI KAS ON VAJA SYS, STRING JA GIS
 import os, sys, string
-#import sys
-#import string
 import grass.script as grass
 import grass.lib.vector as vect
-#from ctypes import *
 import grass.lib.gis as gis
 
 
 def main():
     # User inputs
-    friction = options['friction']
-    points = options['points']
-    output = options['output']
-    radius = int(options['radius'])
-    no_close_points = int(options['closepoints'])
-    netout = options['netout']
-    
-    # Get coordinates of input point layer and number of features in the layer
-    coordinates, n_feats = pointCoords(points)
-    distdict = pointDistances(coordinates, n_feats)
-    
-    
-    # Create temporary filenames in a hope they will be unique
-    one_point = "tmp_onepoint_" + str(os.getpid())
-    point_radius = "tmp_pointradius_" + str(os.getpid())
-    point_radius2 = "tmp_pointradius_" + str(os.getpid()) + "2"
-    buffermap = "tmp_buffer_" + str(os.getpid())
-    costmap = "tmp_cost_" + str(os.getpid())
-    lcpmap = "tmp_lcp_" + str(os.getpid())
-    lcptemp = "tmp_lcptemp_" + str(os.getpid())
-    cl_points = "tmp_clpoints"
+    friction = options['friction']  # Input friction raster
+    points = options['points']      # Input point layer
+    output = options['output']      # Output least cost path raster
+    radius = int(options['radius']) # Point search radius
+    n_closepoints = int(options['closepoints'])   # Number of closest points
+    netout = options['netout']      # Network output
 
+    # Get process id (pid) and create temporary layer names
+    # KAS TEHA EHK CLASS NENDEST NING KUSTUTAMINE OLEKS MEETOD?
+    pid = os.getpid() # Process ID, used for making (more or less) unique temporary filenames
+    onepoint1 = "tmp_onepoint_%d" % pid # Layer with one point extracted from main vector point file
+    onepoint2 = "tmp_onepoint_%d_%i" % (pid, 2) # Layer with one point extracted from main vector point file; parallel process
+    pointradius1 = "tmp_pointradius_%d" % pid  # Layer with points that are inside selected radius from onepoint1
+    pointradius2 = "tmp_pointradius_%d_%i" % (pid, 2) # Layer with points that are inside selected radius from onepoint2; parallel process
+    buffermap1 = "tmp_buffer_%d" % pid # Layer with buffer of selected radius around onepoint1
+    buffermap2 = "tmp_buffer_%d_%i" % (pid, 2) # Layer with buffer of selected radius around onepoint2; parallel process
+    costmap1 = "tmp_cost_%d" % pid # Cost surface from onepoint1
+    costmap2 = "tmp_cost_%d_%i" % (pid, 2) # Cost surface from onepoint2; parallel process
+    lcpmap1 = "tmp_lcp_%d" % pid # Least cost path map from costmap1
+    lcpmap2 = "tmp_lcp_%d_%i" % (pid, 2) # Least cost path map from costmap2; parallel process
+    closepoints1 = "tmp_clpoints_%d" % pid # Closest points (number specified by n_closepoints) from onepoint1
+    closepoints2 = "tmp_clpoints_%d_%i" % (pid, 2) # Closest points (number specified by n_closepoints) from onepoint2; parallel process
+    lcptemp = "tmp_lcptemp_%d" % pid # Temporary file for mapcalc
+    
+    # Create a a long string of all temporary layernames for easy deletion them later on
+    # MOTLE KAS ON EHK ELEGANTSEM VIIS?
+    tmpvars = onepoint1 + "," + onepoint2 + "," + pointradius1 + "," + pointradius2 + "," + buffermap1 + "," + buffermap2 + "," + costmap1 + "," + costmap2 + "," + lcpmap1 + "," + lcpmap2 + "," + closepoints1 + "," + closepoints2 + "," + lcptemp
+    
+    # Get coordinates of input point layer and also the total number of point features in the layer
+    all_coords, n_feats = pointCoords(points)
+    distdict = pointDistances(all_coords, n_feats)
+
+    # Initiate new Popen() object for multiprocessing mapcalc
     mapcalcproc = grass.Popen("")
-    # Main loop to create a new cost surface + lcp for each point
-    for feat in range(1, n_feats +1, 2):
 
-        # Extract point 1
-        extract1 = grass.start_command('v.extract', input=points, output=one_point, cats=feat, overwrite=True)
-        # Extract point 2
-        extract2 = grass.start_command('v.extract', input=points, output=one_point+"2", cats=feat, overwrite=True)
+    # Main loop creating cost surface for each point, iterating over every two points as 2 points are processed simultaneously
+    # PAREM JA TAPSEM SELGITUS EHK VAJA. LOOPI SISU VOIKS TRY ALLA PANNA JA EXCEPTIONISSE CLEANUP JA FATAL
+    for feat in range(1, n_feats +1, 2):
         
-        # Meanwhile, get closest points for point 1
-        list_closepoints = closestPoints(feat, distdict, no_close_points)
-        # Get closest points for point 2
-        list_closepoints2 = closestPoints(feat+1, distdict, no_close_points)
-        
+        # Extract points 1 and 2
+        extract1 = grass.start_command('v.extract', input=points, output=onepoint1, cats=feat, overwrite=True, quiet=True)
+        extract2 = grass.start_command('v.extract', input=points, output=onepoint2, cats=feat, overwrite=True, quiet=True)
+        # Meanwhile, get closest points for points 1 & 2
+        list_closepoints1 = closestPoints(feat, distdict, n_closepoints)
+        list_closepoints2 = closestPoints(feat+1, distdict, n_closepoints)
         # Wait for the extractions to finish
         extract1.wait()
         extract2.wait()
-        
+
         # Perform point radius search
         if radius > 0:
-            #Create a buffer around point
-            buffproc1 = grass.start_command('v.buffer', input = one_point, output = buffermap, distance = radius, overwrite=True)
-            buffproc2 = grass.start_command('v.buffer', input = one_point+"2", output = buffermap+"2", distance = radius, overwrite=True)
-            # Make a new layer with points that are within the buffer
+            #Create buffers around points 1 and 2
+            buffproc1 = grass.start_command('v.buffer', input = onepoint1, output = buffermap1, distance = radius, overwrite=True, quiet=True)
+            buffproc2 = grass.start_command('v.buffer', input = onepoint2, output = buffermap2, distance = radius, overwrite=True, quiet=True)
             buffproc1.wait()
-            buffselproc1 = grass.start_command('v.select', ainput = points, binput = buffermap, output = point_radius, operator = 'within', atype = 'point', overwrite = True)
+            # Make a new layer with points that are within the buffer
+            buffproc1 = grass.start_command('v.select', ainput = points, binput = buffermap1, output = pointradius1, operator = 'within', atype = 'point', overwrite = True, quiet=True)
             buffproc2.wait()
-            buffselproc2 = grass.start_command('v.select', ainput = points, binput = buffermap+"2", output = point_radius2, operator = 'within', atype = 'point', overwrite = True)
-            buffselproc1.wait()
-            buffselproc2.wait()
+            buffproc2 = grass.start_command('v.select', ainput = points, binput = buffermap2, output = pointradius2, operator = 'within', atype = 'point', overwrite = True, quiet=True)
+            buffproc1.wait()
+            buffproc2.wait()
         elif radius == 0:
-            # If point radius is set as 0, use the whole point layer and don't perform pointSearchRadius()
-            point_radius = points
-            point_radius2 = point_radius
+            # KAS LEIDUB JALLEGI EHK MONI ELEGANTSEM VARIANT? VAHEST SAAB SELLE ARA JATTA
+            # If point radius is set as 0, use the whole point layer
+            pointradius1 = points
+            pointradius2 = pointradius1
         else:
             # For invalid radius value delete the temporary map and terminate operation
-            # !!! SHOULD MOVE THIS TO THE VERY BEGINNING
-            grass.run_command('g.remove', vect = one_point + "," + one_point+"2")
-            grass.fatal("Invalid radius chosen. Enter 0 for unlimited or positive number for search radius in map units")
-        
-        # Perform closest points search
-        if no_close_points > 0:
-            # If positive number is entered, extract new layers
-            extract1 = grass.start_command('v.extract', input=point_radius, output = cl_points, cats=list_closepoints, overwrite=True)
-            extract2 = grass.start_command('v.extract', input=point_radius2, output = cl_points+"2", cats=list_closepoints2, overwrite=True)
-            # Call MakeLCP() function to create least cost paths
+            # SELLINE KONTROLL VOIKS KYLL PARIS ALGUSES OLLA
+            cleanUp(tmpvars)
+            grass.fatal("Invalid radius value. Enter 0 for unlimited or positive number for search radius in map units")
 
+        # Perform closest points search
+        # SIIN VOIKS MOELDA KUIDAS SEE SUHESTUB RAADIUSEGA - MIS JARJEKORRAS NEED TULEVAD JA KAS SEE PEAKS OLEMA VALIKULINE. SEE VOIB TAHENDADA SIINSE STRUKTUURI TOSIST MUUTUST. NT LCP TEGEMISE ASI VOIB JU PARIS OMAETTE FUNKTSIOON OLLA. LISAKS, JARGNEVA IF ELSE SYSTEEMI SAAB LAGUNDADA NING TEHA IF PUHUL VAID MUUTUJATE SAMASTAMINE NING KOGU COST JA LCP TEGEMINE OLEKS VAID YHE KASU ALL
+        if n_closepoints > 0:
+            # If positive number is entered, extract new layers
+            # PANE TAHELE, ET SIIN ON INPUT POINTRADIUS
+            extract1 = grass.start_command('v.extract', input=pointradius1, output = closepoints1, cats=list_closepoints1, overwrite=True, quiet=True)
+            extract2 = grass.start_command('v.extract', input=pointradius2, output = closepoints2, cats=list_closepoints2, overwrite=True, quiet=True)
+            # Create cost surfaces
+            # RATSUKAIK VOIKS OLLA VALIKULINE (flags="k")
+            lcpproc1 = grass.start_command('r.cost', flags="k", overwrite=True, input=friction, output=costmap1, start_points=onepoint1)
+            lcpproc2 = grass.start_command('r.cost', flags="k", overwrite=True, input=friction, output=costmap2, start_points=onepoint2)
+            # Wait until previous actions are finished, then proceed with r.drain (shortest path module)
             extract1.wait()
-            lcpproc1 = grass.start_command('r.cost', flags="k", overwrite=True, input=friction, output=costmap, start_points=one_point)
             extract2.wait()
-            lcpproc2 = grass.start_command('r.cost', flags="k", overwrite=True, input=friction, output=costmap+"2", start_points=one_point+"2")
             lcpproc1.wait()
-            grass.run_command('r.drain', overwrite=True, input=costmap, output=lcpmap, start_points=cl_points)
+            lcpproc1 = grass.start_command('r.drain', overwrite=True, input=costmap1, output=lcpmap1, start_points=closepoints1)
             lcpproc2.wait()
-            grass.run_command('r.drain', overwrite=True, input=costmap+"2", output=lcpmap+"2", start_points=cl_points+"2")            
+            lcpproc2 = grass.start_command('r.drain', overwrite=True, input=costmap2, output=lcpmap2, start_points=closepoints2)
+            lcpproc1.wait()
+            lcpproc2.wait()
         else:
-            # Create cost surface for with 1 point input
-            lcpproc1 = grass.start_command('r.cost', flags="k", overwrite=True, input=friction, output=costmap, start_points=one_point)
-            lcpproc2 = grass.start_command('r.cost', flags="k", overwrite=True, input=friction, output=costmap+"2", start_points=one_point+"2")
+            # Create cost surfaces for 2 points
+            lcpproc1 = grass.start_command('r.cost', flags="k", overwrite=True, input=friction, output=costmap1, start_points=onepoint1)
+            lcpproc2 = grass.start_command('r.cost', flags="k", overwrite=True, input=friction, output=costmap2, start_points=onepoint2)
             # Least-cost paths from every other point to the current point
             lcpproc1.wait()
-            grass.run_command('r.drain', overwrite=True, input=costmap, output=lcpmap, start_points=point_radius)
+            lcpproc1 = grass.start_command('r.drain', overwrite=True, input=costmap1, output=lcpmap1, start_points=pointradius1)
             lcpproc2.wait()
-            grass.run_command('r.drain', overwrite=True, input=costmap+"2", output=lcpmap+"2", start_points=point_radius2)
-    
-        # Because point_radius might be equal to points and thus the latter get deleted afterwards, here's a solution to make them different again.
-        point_radius = "tmp_pointradius_" + str(os.getpid())
-        point_radius2 = "tmp_pointradius_" + str(os.getpid()) + "2"
-        
+            lcpproc2 = grass.start_command('r.drain', overwrite=True, input=costmap2, output=lcpmap2, start_points=pointradius2)
+            lcpproc2.wait()
+
+        # Because <pointradius1> or <pointradius2> might be equal to <points> (if no search radius is specified) and thus the latter get deleted afterwards, here's a solution to make them different again.
+        # VAGA KOLE LAHENDUS, KINDLASTI ON MIDAGI PAREMAT VOIMALIK TEHA
+        pointradius1 = "tmp_pointradius_%d" % pid
+        pointradius2 = "tmp_pointradius_%d_%i" % (pid, 2)
+
         # If the point is the first feature in a layer, create a new layer from that drain map. For every other points, reuse the previous map and add new path to it.
         if feat == 1:
-            grass.mapcalc("$outmap = if(isnull($tempmap),0,1) + if(isnull($tempmap2),0,1)", outmap = output, tempmap = lcpmap, tempmap2 = lcpmap+"2", overwrite=True)
+            grass.mapcalc("$outmap = if(isnull($tempmap),0,1) + if(isnull($tempmap2),0,1)", outmap = output, tempmap = lcpmap1, tempmap2 = lcpmap2, overwrite=True)
         else:
+            # Wait for the mapcalc operation from previous iteration to finish
             mapcalcproc.wait()
             # Rename the cumulative lcp map from previous iteration so that mapcalc can use it (x=x+y doesn't work with mapcalc)
             grass.run_command('g.rename', rast = output + ',' + lcptemp, overwrite=True)
-            # output = PreviousLCP + CurrentLCP
-            mapcalcproc = grass.mapcalc_start("$outmap = $inmap + if(isnull($tempmap),0,1) + if(isnull($tempmap2),0,1)", inmap = lcptemp, outmap = output, tempmap = lcpmap, tempmap2 = lcpmap+"2")
-    
+            # output = Previous LCP + Current LCP
+            mapcalcproc = grass.mapcalc_start("$outmap = $inmap + if(isnull($tempmap),0,1) + if(isnull($tempmap2),0,1)", inmap = lcptemp, outmap = output, tempmap = lcpmap1, tempmap2 = lcpmap2)
+
+    # Wait for last mapcalc to finish
     mapcalcproc.wait()
     # Make 0 values into NULLs
-    grass.run_command('r.null', map = output, setnull = "0")
-    
-    # Delete temporary maps
-    grass.run_command('g.remove', rast = costmap + "," + costmap + "2," + lcpmap + "," + lcpmap + "2," + lcptemp, vect = one_point + "," + one_point + "2," + buffermap + "," + buffermap + "2," + point_radius + point_radius2)
+    nullproc = grass.start_command('r.null', map = output, setnull = "0")
+    cleanUp(tmpvars)
+    nullproc.wait()
+    grass.message("All done")
 
+
+def cleanUp(tmpvars):
+    # Delete temporary maps
+    grass.run_command('g.remove', rast = tmpvars, vect = tmpvars)
+
+def costDistances(costmap, point_radius):
+    pass
+    """
+    # Need number of features + their coords
+    lcpmap = "tmp_lcp_" + str(os.getpid())
+    coordlist, n_feats = pointCoords(point_radius)
+    for feat in coordlist:
+        x, y = coordlist[feat]
+        startpoints = str(x) + "," + str(y)
+        grass.run_command('r.drain', overwrite=True, flags = 'a', input=costmap, output=lcpmap, start_coordinates=startpoints)
+        grass.raster_info('elevation')print feat
+    """
 
 def closestPoints(pointnumber, distdict, totalnumber):
     # Scan the dictionary to find closest points and write the point cats to a list
@@ -228,16 +280,6 @@ def pointCoords(layername):
     # Return coordinate list and number of features in the layer as a tuple
     return coordlist, nlines
 
-def pointSearchRadius(one_point, pointlayer, radius, outputlayer, templayer):
-
-    #Create a buffer around point
-    grass.run_command('v.buffer', input = one_point, output = templayer, distance = radius, overwrite=True)
-    # Make a new layer with points that are within the buffer
-    grass.run_command('v.select', ainput = pointlayer, binput = templayer, output = outputlayer, operator = 'within', atype = 'point', overwrite = True)
-
-
 if __name__ == "__main__":
     options, flags = grass.parser()
     main()
-
-
