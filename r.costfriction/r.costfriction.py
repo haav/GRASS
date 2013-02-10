@@ -61,7 +61,7 @@ def main():
 
     # Check if slope output name is specified
     if not slope:
-        slope = "_tmp_slope_%d_" %os.getpid()
+        slope = "tmp_slope_%d_" %os.getpid()
 
     # Generate slope (in percent)
     grass.run_command('r.slope.aspect', elevation=dem, slope=slope, format='percent')
