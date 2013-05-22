@@ -1,4 +1,4 @@
-#!/usr/bin/env
+#!/usr/bin/env python
 ############################################################################
 #
 # MODULE:       r.circuit
@@ -15,7 +15,7 @@
 #
 #############################################################################
 #%module
-#% description: Circuitscape 
+#% description: Circuitscape interface to GRASS
 #% keywords: circuitscape
 #% keywords: cost
 #% keywords: raster

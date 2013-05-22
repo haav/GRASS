@@ -1,4 +1,4 @@
-#!/usr/bin/env
+#!/usr/bin/env python
 ############################################################################
 #
 # MODULE:       r.lcp
@@ -174,9 +174,9 @@ def main():
     costdict2 = dict()
     
     # Create the first mapcalc process, so that it can be checked and stopped in the loop without using more complicated ways
-    mapcalc = grass.Popen("")
-    lcp1 = grass.Popen("")
-    lcp2 = grass.Popen("")
+    mapcalc = grass.Popen("", shell=True)
+    lcp1 = grass.Popen("", shell=True)
+    lcp2 = grass.Popen("", shell=True)
     
     # The main loop for least cost path creation. For each point a cost surface is created, least cost paths created and then added to the general output file. Loop uses a range which has as many items as there are points in the input point layer. To make use of parallel processing, the step is 2, although the "item" is always the first of the selected pair.
     for item in range(0,points_featcount,2):
