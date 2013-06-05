@@ -88,8 +88,7 @@ def main():
     maxradius = options['maxradius']            # Max radius
     output_prefix = options['prefix']           # Output layer prefix
     
-    
-    """ Routine for getting point coordinates """
+    # Get individual point coordinates and write them to dictionary
     # Create a new Map_info() object
     map = vect.pointer(vect.Map_info())
     # Load the vector map to Map_info() object. Level should be 2 (with topology)
